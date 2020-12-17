@@ -189,14 +189,10 @@ class QMLDriveApi(QObject):
         limit = 5  # 10 files are displayed in the systray, so take 5 of each kind
         result: List[Dict[str, Any]] = []
 
-        for count, download in enumerate(dao.get_downloads()):
-            if count >= limit:
-                break
+        for download in dao.get_downloads(limit=limit):
             result.append(asdict(download))
 
-        for count, upload in enumerate(dao.get_uploads()):
-            if count >= limit:
-                break
+        for upload in dao.get_uploads(limit=limit):
             result.append(asdict(upload))
 
         return result

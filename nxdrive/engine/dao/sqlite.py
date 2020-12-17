@@ -8,6 +8,7 @@ import shutil
 import sys
 from contextlib import suppress
 from datetime import datetime
+from functools import partial
 from logging import getLogger
 from os.path import basename
 from pathlib import Path, PosixPath, WindowsPath
@@ -27,7 +28,6 @@ from typing import (
     Any,
     Callable,
     Dict,
-    Generator,
     List,
     Optional,
     Tuple,
@@ -136,6 +136,44 @@ def _adapt_path(path: Path, /) -> str:
 
 
 register_adapter(WindowsPath if WINDOWS else PosixPath, _adapt_path)
+
+
+def get_transfer_with_func(
+    func: Callable,
+    /,
+    *,
+    uid: int = None,
+    path: Path = None,
+    doc_pair: int = None,
+    status: TransferStatus = None,
+) -> Optional[Union[Download, Upload]]:
+    """Helper to fetch 1 transfer."""
+    value: Any
+    if uid is not None:
+        key, value = "uid", uid
+    elif path is not None:
+        key, value = "path", path
+    elif doc_pair is not None:
+        key, value = "doc_pair", doc_pair
+    elif status is not None:
+        key = "status"
+        value = status.value
+    else:
+        # Should never happen
+        log.error(f"get_transfer_with_func({func!r}, {uid!r}, {path!r}, {doc_pair!r}")
+        return None
+
+    res = func(key=key, value=value, limit=1)
+    return res[0] if res else None
+
+
+def status(value: int) -> TransferStatus:
+    """Helper to handle the status value from the database."""
+    try:
+        return TransferStatus(value)
+    except ValueError:
+        # Most likely a NXDRIVE-1901 case
+        return TransferStatus.DONE
 
 
 class AutoRetryCursor(Cursor):
@@ -645,6 +683,11 @@ class EngineDAO(ConfigurationDAO):
         self.get_syncing_count()
         self._filters = self.get_filters()
         self.reinit_processors()
+
+        # Helpers to retrieve only 1 item (or None if no entry found)
+        self.get_download = partial(get_transfer_with_func, self.get_downloads)
+        self.get_upload = partial(get_transfer_with_func, self.get_uploads)
+        self.get_dt_upload = partial(get_transfer_with_func, self.get_dt_uploads)
 
     def get_schema_version(self) -> int:
         return 17
@@ -2325,20 +2368,26 @@ class EngineDAO(ConfigurationDAO):
             self._filters = self.get_filters()
             self.get_syncing_count()
 
-    def get_downloads(self) -> Generator[Download, None, None]:
-        con = self._get_read_connection()
-        c = con.cursor()
-        for res in c.execute("SELECT * FROM Downloads").fetchall():
-            try:
-                status = TransferStatus(res.status)
-            except ValueError:
-                # Most likely a NXDRIVE-1901 case
-                status = TransferStatus.DONE
+    def get_downloads(
+        self, *, key: str = "", value: str = "", limit: int = 1000
+    ) -> List[Download]:
+        """Retrieve sync downloads.
+        It is possible to filter on a given *key* having the value *value*.
+        """
 
-            yield Download(
+        sql = "SELECT * FROM Downloads"
+        args = ()
+        if key:
+            sql += f" WHERE {key} = ?"
+            args = (value,)
+        sql += f" LIMIT {limit}"
+
+        c = self._get_read_connection().cursor()
+        return [
+            Download(
                 res.uid,
                 Path(res.path),
-                status,
+                status(res.status),
                 res.engine,
                 is_direct_edit=res.is_direct_edit,
                 progress=res.progress,
@@ -2347,23 +2396,29 @@ class EngineDAO(ConfigurationDAO):
                 tmpname=Path(res.tmpname),
                 url=res.url,
             )
+            for res in c.execute(sql, args).fetchall()
+        ]
 
-    def get_uploads(self) -> Generator[Upload, None, None]:
-        con = self._get_read_connection()
-        c = con.cursor()
-        for res in c.execute(
-            "SELECT * FROM Uploads WHERE is_direct_transfer = 0"
-        ).fetchall():
-            try:
-                status = TransferStatus(res.status)
-            except ValueError:
-                # Most likely a NXDRIVE-1901 case
-                status = TransferStatus.DONE
+    def get_uploads(
+        self, *, key: str = "", value: str = "", limit: int = 1000
+    ) -> List[Upload]:
+        """Retrieve sync uploads.
+        It is possible to filter on a given *key* having the value *value*.
+        """
 
-            yield Upload(
+        sql = "SELECT * FROM Uploads WHERE is_direct_transfer = 0"
+        args = ()
+        if key:
+            sql += f" AND {key} = ?"
+            args = (value,)
+        sql += f" LIMIT {limit}"
+
+        c = self._get_read_connection().cursor()
+        return [
+            Upload(
                 res.uid,
                 Path(res.path),
-                status,
+                status(res.status),
                 res.engine,
                 is_direct_edit=res.is_direct_edit,
                 progress=res.progress,
@@ -2372,18 +2427,29 @@ class EngineDAO(ConfigurationDAO):
                 batch=json.loads(res.batch),
                 chunk_size=res.chunk_size or 0,
             )
+            for res in c.execute(sql, args).fetchall()
+        ]
 
-    def get_dt_uploads(self) -> Generator[Upload, None, None]:
-        """Retrieve all Direct Transfer items (only needed details)."""
-        con = self._get_read_connection()
-        c = con.cursor()
-        for res in c.execute(
-            "SELECT * FROM Uploads WHERE is_direct_transfer = 1"
-        ).fetchall():
-            yield Upload(
+    def get_dt_uploads(
+        self, *, key: str = "", value: str = "", limit: int = 1000
+    ) -> List[Upload]:
+        """Retrieve Direct Transfer items.
+        It is possible to filter on a given *key* having the value *value*.
+        """
+
+        sql = "SELECT * FROM Uploads WHERE is_direct_transfer = 1"
+        args = ()
+        if key:
+            sql += f" AND {key} = ?"
+            args = (value,)
+        sql += f" LIMIT {limit}"
+
+        c = self._get_read_connection().cursor()
+        return [
+            Upload(
                 res.uid,
                 Path(res.path),
-                TransferStatus(res.status),
+                status(res.status),
                 res.engine,
                 batch=json.loads(res.batch),
                 chunk_size=res.chunk_size or 0,
@@ -2394,6 +2460,8 @@ class EngineDAO(ConfigurationDAO):
                 remote_parent_path=res.remote_parent_path,
                 remote_parent_ref=res.remote_parent_ref,
             )
+            for res in c.execute(sql, args).fetchall()
+        ]
 
     def get_dt_uploads_raw(
         self, *, limit: int = 1, chunked: bool = False
@@ -2415,7 +2483,7 @@ class EngineDAO(ConfigurationDAO):
                 "uid": res.uid,
                 "name": basename(res.path),  # More efficient than Path(res.path).name
                 "filesize": res.filesize,
-                "status": TransferStatus(res.status),
+                "status": status(res.status),
                 "engine": res.engine,
                 "progress": res.progress or 0.0,
                 "doc_pair": res.doc_pair,
@@ -2436,7 +2504,7 @@ class EngineDAO(ConfigurationDAO):
         return [
             {
                 "uid": res.uid,
-                "status": TransferStatus(res.status),
+                "status": status(res.status),
                 "remote_path": res.remote_path,
                 "remote_ref": res.remote_ref,
                 "uploaded": res.uploaded,
@@ -2464,7 +2532,7 @@ class EngineDAO(ConfigurationDAO):
         return [
             {
                 "uid": res.uid,
-                "status": TransferStatus(res.status),
+                "status": status(res.status),
                 "remote_path": res.remote_path,
                 "remote_ref": res.remote_ref,
                 "uploaded": res.uploaded,
@@ -2493,7 +2561,7 @@ class EngineDAO(ConfigurationDAO):
                 res.uid,
                 res.remote_path,
                 res.remote_ref,
-                TransferStatus(res.status),
+                status(res.status),
                 res.uploaded,
                 res.total,
                 res.engine,
@@ -2610,64 +2678,6 @@ class EngineDAO(ConfigurationDAO):
             )
             self.sessionUpdated.emit()
             return session
-
-    def get_downloads_with_status(self, status: TransferStatus, /) -> List[Download]:
-        return [d for d in self.get_downloads() if d.status == status]
-
-    def get_uploads_with_status(self, status: TransferStatus, /) -> List[Upload]:
-        return self._get_uploads_with_status_and_func(self.get_uploads, status)
-
-    def get_dt_uploads_with_status(self, status: TransferStatus, /) -> List[Upload]:
-        return self._get_uploads_with_status_and_func(self.get_dt_uploads, status)
-
-    def _get_uploads_with_status_and_func(
-        self, func: Callable, status: TransferStatus, /
-    ) -> List[Upload]:
-        return [u for u in func() if u.status == status]
-
-    def get_download(
-        self, *, uid: int = None, path: Path = None, doc_pair: int = None
-    ) -> Optional[Download]:
-        value: Any
-        if uid:
-            key, value = "uid", uid
-        elif path:
-            key, value = "path", path
-        elif doc_pair:
-            key, value = "doc_pair", doc_pair
-        else:
-            return None
-
-        res = [d for d in self.get_downloads() if getattr(d, key) == value]
-        return res[0] if res else None
-
-    def get_upload(self, **kwargs: Any) -> Optional[Upload]:
-        return self._get_upload_with_func(self.get_uploads, **kwargs)
-
-    def get_dt_upload(self, **kwargs: Any) -> Optional[Upload]:
-        return self._get_upload_with_func(self.get_dt_uploads, **kwargs)
-
-    def _get_upload_with_func(
-        self,
-        func: Callable,
-        /,
-        *,
-        uid: int = None,
-        path: Path = None,
-        doc_pair: int = None,
-    ) -> Optional[Upload]:
-        value: Any
-        if uid:
-            key, value = "uid", uid
-        elif path:
-            key, value = "path", path
-        elif doc_pair:
-            key, value = "doc_pair", doc_pair
-        else:
-            return None
-
-        res = [u for u in func() if getattr(u, key) == value]
-        return res[0] if res else None
 
     def save_download(self, download: Download, /) -> None:
         """New download."""

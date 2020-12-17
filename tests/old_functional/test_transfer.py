@@ -84,7 +84,7 @@ class TestDownload(OneUserTest):
         with patch.object(engine.remote, "download_callback", new=callback):
             with ensure_no_exception():
                 self.wait_sync(wait_for_async=True)
-            assert dao.get_downloads_with_status(TransferStatus.PAUSED)
+            assert dao.get_download(status=TransferStatus.PAUSED)
 
         # Resume the download
         engine.resume_transfer("download", list(dao.get_downloads())[0].uid)
@@ -129,7 +129,7 @@ class TestDownload(OneUserTest):
         with patch.object(engine.remote, "download_callback", new=callback):
             with ensure_no_exception():
                 self.wait_sync(wait_for_async=True)
-            assert dao.get_downloads_with_status(TransferStatus.SUSPENDED)
+            assert dao.get_download(status=TransferStatus.SUSPENDED)
 
         # Resume the download
         self.manager_1.resume()
@@ -281,7 +281,7 @@ class TestUpload(OneUserTest):
         with patch.object(engine.remote, "upload_callback", new=callback):
             with ensure_no_exception():
                 self.wait_sync()
-            assert dao.get_uploads_with_status(TransferStatus.PAUSED)
+            assert dao.get_upload(status=TransferStatus.PAUSED)
 
         # Resume the upload
         engine.resume_transfer("upload", list(dao.get_uploads())[0].uid)
@@ -317,7 +317,7 @@ class TestUpload(OneUserTest):
         with patch.object(engine.remote, "upload_callback", new=callback):
             with ensure_no_exception():
                 self.wait_sync()
-            assert dao.get_uploads_with_status(TransferStatus.SUSPENDED)
+            assert dao.get_upload(status=TransferStatus.SUSPENDED)
 
         # Resume the upload
         self.manager_1.resume()
@@ -732,7 +732,7 @@ class TestUpload(OneUserTest):
                 self.wait_sync()
 
         # For now, the transfer is only suspended
-        assert dao.get_uploads_with_status(TransferStatus.SUSPENDED)
+        assert dao.get_upload(status=TransferStatus.SUSPENDED)
 
         # Stop the engine
         engine.stop()
@@ -741,7 +741,7 @@ class TestUpload(OneUserTest):
         upload = list(dao.get_uploads())[0]
         upload.status = TransferStatus.ONGOING
         dao.set_transfer_status("upload", upload)
-        assert dao.get_uploads_with_status(TransferStatus.ONGOING)
+        assert dao.get_upload(status=TransferStatus.ONGOING)
 
         # Simple check: nothing has been uploaded yet
         assert not self.remote_1.exists("/test.bin")

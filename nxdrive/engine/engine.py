@@ -621,11 +621,7 @@ class Engine(QObject):
         resume = self.dao.resume_transfer
         get_state = self.dao.get_state_from_id
 
-        transfers = func()
-        if not isinstance(transfers, list):
-            transfers = [transfers]
-
-        for transfer in transfers:
+        for transfer in func():
             if transfer.uid is None:
                 continue
 
@@ -655,12 +651,14 @@ class Engine(QObject):
         status = TransferStatus.SUSPENDED
 
         self._resume_transfers(
-            "download", partial(dao.get_downloads_with_status, status)
+            "download", partial(dao.get_downloads, key="status", value=status.value)
         )
-        self._resume_transfers("upload", partial(dao.get_uploads_with_status, status))
+        self._resume_transfers(
+            "upload", partial(dao.get_uploads, key="status", value=status.value)
+        )
         self._resume_transfers(
             "upload",
-            partial(dao.get_dt_uploads_with_status, status),
+            partial(dao.get_dt_uploads, key="status", value=status.value),
             is_direct_transfer=True,
         )
 
@@ -688,8 +686,8 @@ class Engine(QObject):
         dao = self.dao
 
         for nature in ("download", "upload"):
-            meth = getattr(dao, f"get_{nature}s_with_status")
-            for transfer in meth(TransferStatus.ONGOING):
+            meth = getattr(dao, f"get_{nature}s")
+            for transfer in meth(key="status", value=TransferStatus.ONGOING.value):
                 if app_has_crashed:
                     # Update the status to let .resume_suspended_transfers() processing it
                     transfer.status = TransferStatus.SUSPENDED

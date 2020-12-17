@@ -159,7 +159,7 @@ class DirectTransfer:
                 self.direct_transfer(last_local_selected_location=self.file.parent)
                 self.wait_sync()
 
-            assert dao.get_dt_uploads_with_status(TransferStatus.PAUSED)
+            assert dao.get_dt_upload(status=TransferStatus.PAUSED)
 
             last_location = dao.get_config("dt_last_local_selected_location")
             assert last_location
@@ -319,7 +319,7 @@ class DirectTransfer:
             with ensure_no_exception():
                 self.direct_transfer()
                 self.wait_sync()
-            assert dao.get_dt_uploads_with_status(TransferStatus.PAUSED)
+            assert dao.get_dt_upload(status=TransferStatus.PAUSED)
 
         # Resume the upload
         engine.resume_transfer(
@@ -354,7 +354,7 @@ class DirectTransfer:
             with ensure_no_exception():
                 self.direct_transfer()
                 self.wait_sync()
-            assert dao.get_dt_uploads_with_status(TransferStatus.SUSPENDED)
+            assert dao.get_dt_upload(status=TransferStatus.SUSPENDED)
 
         # Resume the upload
         self.manager_1.resume()
