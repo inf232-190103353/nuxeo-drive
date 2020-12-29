@@ -32,6 +32,8 @@ _build: &_build
   script:
     - bash tools/$TRAVIS_OS_NAME/travis.sh
   after_failure:
+    - cat nxdrive-dmg-dev.log || cat nxdrive-exe-dev.log || true
+    - cat ~/.nuxeo-drive-last-fatal-error.txt || true
     - bash tools/release.sh --cancel
 
 jobs:

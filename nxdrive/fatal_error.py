@@ -127,6 +127,11 @@ def fatal_error_qt(exc_formatted: str, /) -> None:
             logs.setText(lines)
             layout.addWidget(logs)
 
+    # Save a copy of the report, to ease debugging on the CI
+    with suppress(Exception):
+        error_log = Path.home() / ".nuxeo-drive-last-fatal-error.txt"
+        error_log.write_text("\n".join(details))
+
     def open_update_site() -> None:
         """Open the update web site."""
         if WINDOWS:
