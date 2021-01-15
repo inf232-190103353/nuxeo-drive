@@ -4,6 +4,7 @@ Uploader used by the Remote client for all upload stuff.
 from abc import abstractmethod
 from logging import getLogger
 from pathlib import Path
+from threading import RLock
 from time import monotonic_ns
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
@@ -36,6 +37,7 @@ class BaseUploader:
     def __init__(self, remote: "Remote", /) -> None:
         self.remote = remote
         self.dao = remote.dao
+        self._lock = RLock()
 
     @abstractmethod
     def get_upload(
@@ -170,7 +172,7 @@ class BaseUploader:
 
         # Step 0: tweak the blob
         blob = FileBlob(str(file_path))
-        if filename:
+        if filename and blob.name != filename:
             blob.name = filename
 
         # Step 0.5: retrieve or instantiate a new transfer
@@ -396,19 +398,22 @@ class BaseUploader:
 
         uploader.service.refresh_token = refresh
 
-    @staticmethod
-    def _complete_upload(transfer: Upload, blob: FileBlob, /) -> None:
+    def _complete_upload(self, transfer: Upload, blob: FileBlob, /) -> None:
         """Helper to complete an upload."""
-
         # Set those attributes as FileBlob does not have them
         # and they are required for the step 2 of .upload_impl()
-        blob.batchId = transfer.batch_obj.uid
-        blob.fileIdx = 0
+        if blob.batchId != transfer.batch_obj.uid:
+            blob.batchId = transfer.batch_obj.uid
+        if blob.fileIdx is None:
+            blob.fileIdx = 0
         transfer.batch_obj.upload_idx = 1
 
+        log.debug(f"{transfer.batch_obj.blobs = }")
         if not transfer.batch_obj.blobs or not transfer.batch_obj.blobs[0]:
             transfer.batch_obj.blobs[0] = blob
+            log.debug(f"Changed {transfer.batch_obj.blobs = }")
 
         # Complete the upload on the S3 side
         if transfer.batch_obj.is_s3() and transfer.status is not TransferStatus.DONE:
-            transfer.batch_obj.complete(timeout=TX_TIMEOUT)
+            with self._lock:
+                transfer.batch_obj.complete(timeout=TX_TIMEOUT)

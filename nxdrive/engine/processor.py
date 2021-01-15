@@ -963,8 +963,8 @@ class Processor(EngineWorker):
                     self.local.set_remote_id(doc_pair.local_path, remote_ref)
             except NotFound:
                 new_pair = self.dao.get_state_from_id(doc_pair.id)
-                # File has been moved during creation
                 if new_pair and new_pair.local_path != doc_pair.local_path:
+                    log.debug("The file has been moved during creation")
                     self.local.set_remote_id(new_pair.local_path, remote_ref)
                     self._synchronize_locally_moved(new_pair, update=False)
                     return
